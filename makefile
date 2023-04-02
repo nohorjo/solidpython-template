@@ -21,7 +21,48 @@ with open(filename) as f:
 endef
 export GEN_DEPS
 
-.PHONY: all clean scad
+define UPDATE
+import os
+import re
+import sys
+
+filename = sys.argv[1]
+
+if filename[0:2] == './':
+	filename = filename[2:]
+
+if filename[-3:] == '.py':
+	importPattern = re.compile("^from \w+ import")
+
+	os.system("python3 " + filename)
+
+	with open(filename) as f:
+			importLines = [ line for line in f if importPattern.match(line) ]
+			importLines = map(lambda l: l.split()[1], importLines)
+
+			for imp in importLines:
+					if os.path.isfile(imp + ".py"):
+							depsfile = ".%s.isdep"% imp
+							toAdd = filename + "\n"
+							with open(depsfile, 'a+') as df:
+									df.seek(0)
+									if not toAdd in df:
+											df.write(toAdd)
+
+	isdep = ".%s.isdep"% filename[:-3]
+
+	try:
+			f = open(isdep)
+			for line in f:
+					if os.path.isfile(line.strip()):
+							os.system("python3 " + line)
+			f.close()
+	except FileNotFoundError:
+			pass
+endef
+export UPDATE
+
+.PHONY: all clean scad watch
 
 all: $(patsubst %.py,stl/%.stl,$(SOURCES))
 
@@ -33,6 +74,7 @@ scad: $(patsubst %.py,_%.scad,$(SOURCES))
 -include $(patsubst %.py,.%.dep,$(SOURCES))
 
 _%.scad: %.py
+	python -c "$$UPDATE" $<
 	python $<
 
 stl/%.stl: _%.scad
@@ -41,3 +83,8 @@ stl/%.stl: _%.scad
 clean:
 	rm stl/* *.scad .*.scad .*.dep .*.isdep
 
+watch:
+	inotifywait -m --format '%w' -e close_write ./*.py | while read FILE; \
+		do python -c "$$UPDATE" "$$FILE"; \
+		sleep 0.3; \
+	done
