@@ -26,43 +26,68 @@ import os
 import re
 import sys
 
-filename = sys.argv[1]
+importPattern = re.compile("^from \w+ import")
 
-if filename[0:2] == './':
-	filename = filename[2:]
+def update_deps(filename, skip_deps):
+  if filename[0:2] == './':
+    filename = filename[2:]
 
-if filename[-3:] == '.py':
-	importPattern = re.compile("^from \w+ import")
+  print("Executing " + filename)
+  os.system("python3 " + filename)
 
-	os.system("python3 " + filename)
+  with open(filename) as f:
+      importLines = [ line for line in f if importPattern.match(line) ]
+      importLines = map(lambda l: l.split()[1], importLines)
 
-	with open(filename) as f:
-			importLines = [ line for line in f if importPattern.match(line) ]
-			importLines = map(lambda l: l.split()[1], importLines)
+      for imp in importLines:
+          if os.path.isfile(imp + ".py"):
+              depsfile = ".%s.isdep"% imp
+              toAdd = filename + "\n"
+              with open(depsfile, 'a+') as df:
+                  df.seek(0)
+                  if not toAdd in df:
+                      df.write(toAdd)
 
-			for imp in importLines:
-					if os.path.isfile(imp + ".py"):
-							depsfile = ".%s.isdep"% imp
-							toAdd = filename + "\n"
-							with open(depsfile, 'a+') as df:
-									df.seek(0)
-									if not toAdd in df:
-											df.write(toAdd)
+  isdep = ".%s.isdep"% filename[:-3]
 
-	isdep = ".%s.isdep"% filename[:-3]
+  try:
+    f = open(isdep)
+    deps = list(map(lambda x: x.strip(), open(isdep)))
+    for line in deps:
+      if line not in skip_deps and os.path.isfile(line):
+        update_deps(line, skip_deps + deps)
+    f.close()
+  except FileNotFoundError:
+    pass
 
-	try:
-			f = open(isdep)
-			for line in f:
-					if os.path.isfile(line.strip()):
-							os.system("python3 " + line)
-			f.close()
-	except FileNotFoundError:
-			pass
+update_deps(sys.argv[1], [])
 endef
 export UPDATE
 
-.PHONY: all clean scad watch
+define NEW_MODULE
+read -p "Enter module name: " mn
+echo "
+from solid import *
+from solid.utils import *
+
+from constants import *
+from super_hole import *
+
+def $$mn():
+  model = cube([1, 2, 3])
+
+  return model
+
+if __name__ == '__main__':
+  model = $$mn()
+
+  scad_render_to_file(model, '_%s.scad'% __file__.split('/')[-1][:-3])
+
+" > $$mn.py
+endef
+export NEW_MODULE
+
+.PHONY: all clean new scad watch
 
 all: $(patsubst %.py,stl/%.stl,$(SOURCES))
 
@@ -83,8 +108,10 @@ stl/%.stl: _%.scad
 clean:
 	rm stl/* *.scad .*.scad .*.dep .*.isdep
 
+new:
+	bash -c "$$NEW_MODULE"
+
 watch:
 	inotifywait -m --format '%w' -e close_write ./*.py | while read FILE; \
 		do python -c "$$UPDATE" "$$FILE"; \
-		sleep 0.3; \
 	done
